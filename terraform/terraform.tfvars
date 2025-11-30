@@ -1,0 +1,5 @@
+project_id = "brewquest-analytics"
+region     = "us-east1"
+dataset_id = "dbt_saahil"
+function_name = "beer-recommender"
+service_account_id = "innerbeer-sa"
