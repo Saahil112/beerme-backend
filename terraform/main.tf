@@ -63,6 +63,42 @@ module "cloud_function" {
   depends_on = [google_project_service.services, module.bigquery, module.iam]
 }
 
+module "source_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "fetch-source"
+  runtime               = var.function_runtime
+  service_account_email = module.iam.service_account_email
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "fetch_source"
+  source_main_py        = "fetch_source.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.iam]
+}
+
+module "search_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "search-beer"
+  runtime               = var.function_runtime
+  service_account_email = module.iam.service_account_email
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "search_beer"
+  source_main_py        = "search_beer.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.iam]
+}
+
 module "auth_function" {
   source                = "./cloud_functions"
   project_id            = var.project_id
