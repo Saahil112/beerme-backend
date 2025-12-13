@@ -33,6 +33,17 @@ data "google_secret_manager_secret_version" "jwt_secret" {
   project = var.project_id
 }
 
+# OAuth client credentials
+data "google_secret_manager_secret_version" "oauth_client_id" {
+  secret  = "oauth_client_id"
+  project = var.project_id
+}
+
+data "google_secret_manager_secret_version" "oauth_client_secret" {
+  secret  = "oauth_client_secret"
+  project = var.project_id
+}
+
 module "bigquery" {
   source = "./bigquery"
   project_id = var.project_id
@@ -119,6 +130,58 @@ module "auth_function" {
     })
   }
   depends_on = [google_project_service.services, module.iam]
+}
+
+module "oauth_login_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "oauth-login"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "oauth_login"
+  source_main_py        = "oauth_login.py"
+  entry_point           = "main"
+  extra_env = {
+    OAUTH_CLIENT_ID     = data.google_secret_manager_secret_version.oauth_client_id.secret_data
+    OAUTH_CLIENT_SECRET = data.google_secret_manager_secret_version.oauth_client_secret.secret_data
+    PROJECT_ID          = var.project_id
+    DATASET_ID          = var.dataset_id
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
+# Grant table-level write on users to writer SA
+resource "google_bigquery_table_iam_member" "users_writer" {
+  project    = var.project_id
+  dataset_id = var.dataset_id
+  table_id   = "users"
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+}
+
+# Secret Manager access for the writer SA
+resource "google_project_iam_member" "writer_sa_secret_accessor" {
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+}
+
+# Allow writer SA to run BigQuery jobs
+resource "google_project_iam_member" "writer_sa_bq_jobuser" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+}
+
+# Grant dataset-level edit access for writes/merges
+resource "google_bigquery_dataset_iam_member" "writer_sa_dataset_editor" {
+  project    = var.project_id
+  dataset_id = var.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
 }
 
 # Ensure the function's service account can read the dataset
