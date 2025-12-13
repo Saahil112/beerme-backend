@@ -2,3 +2,8 @@
 .terraform/
 *.tfstate
 */.staging/*
+terraform/terraform.tfstate
+terraform/terraform.tfstate
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/tfplan
