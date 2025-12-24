@@ -10,7 +10,7 @@ locals {
 resource "null_resource" "stage_source" {
   triggers = {
     function_name = var.function_name
-    src_mtime     = timestamp()
+    src_hash      = md5(join("", [for f in fileset(local.src_dir, "**") : filemd5("${local.src_dir}/${f}")]))
   }
 
   provisioner "local-exec" {
@@ -34,7 +34,7 @@ data "archive_file" "function_zip" {
 }
 
 resource "google_storage_bucket_object" "source_zip" {
-  name   = "${var.function_name}.zip"
+  name   = "${var.function_name}-${data.archive_file.function_zip.output_md5}.zip"
   bucket = var.bucket_name
   source = data.archive_file.function_zip.output_path
   content_type = "application/zip"

@@ -50,7 +50,52 @@ def split_name(full_name: Optional[str]) -> Tuple[str, Optional[str]]:
     return parts[0], " ".join(parts[1:])
 
 
-def upsert_user(cuid: str, email: str, first_name: str, last_name: Optional[str], profile_pic_url: Optional[str]) -> Dict[str, Any]:
+def get_existing_user(email: str) -> Optional[Dict[str, Any]]:
+    """Fetch existing user by email"""
+    if not USERS_TABLE:
+        raise ValueError("Server misconfigured: PROJECT_ID/DATASET_ID not set")
+    
+    query = f"""
+    SELECT cuid, first_name, last_name, email, profile_pic_url, username
+    FROM `{USERS_TABLE}`
+    WHERE email = @email
+    LIMIT 1
+    """
+    params = [bigquery.ScalarQueryParameter("email", "STRING", email)]
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    rows = list(client.query(query, job_config=job_config).result())
+    
+    if rows:
+        row = rows[0]
+        return {
+            "cuid": row.cuid,
+            "first_name": row.first_name,
+            "last_name": row.last_name,
+            "email": row.email,
+            "profile_pic_url": row.profile_pic_url,
+            "username": row.username,
+        }
+    return None
+
+
+def check_username_available(username: str) -> bool:
+    """Check if a username is available"""
+    if not USERS_TABLE:
+        raise ValueError("Server misconfigured: PROJECT_ID/DATASET_ID not set")
+    
+    query = f"""
+    SELECT COUNT(*) as count
+    FROM `{USERS_TABLE}`
+    WHERE username = @username
+    """
+    params = [bigquery.ScalarQueryParameter("username", "STRING", username)]
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    rows = list(client.query(query, job_config=job_config).result())
+    
+    return rows[0].count == 0
+
+
+def upsert_user(cuid: str, email: str, first_name: str, last_name: Optional[str], profile_pic_url: Optional[str], username: Optional[str] = None) -> Dict[str, Any]:
     if not USERS_TABLE:
         raise ValueError("Server misconfigured: PROJECT_ID/DATASET_ID not set")
 
@@ -62,16 +107,18 @@ def upsert_user(cuid: str, email: str, first_name: str, last_name: Optional[str]
         @first_name AS first_name,
         @last_name AS last_name,
         @email AS email,
-        @profile_pic_url AS profile_pic_url
+        @profile_pic_url AS profile_pic_url,
+        @username AS username
     ) AS s
     ON t.email = s.email
     WHEN MATCHED THEN UPDATE SET
       t.cuid = s.cuid,
       t.first_name = s.first_name,
       t.last_name = s.last_name,
-      t.profile_pic_url = s.profile_pic_url
-    WHEN NOT MATCHED THEN INSERT (cuid, first_name, last_name, email, profile_pic_url)
-    VALUES (s.cuid, s.first_name, s.last_name, s.email, s.profile_pic_url)
+      t.profile_pic_url = s.profile_pic_url,
+      t.username = COALESCE(s.username, t.username)
+    WHEN NOT MATCHED THEN INSERT (cuid, first_name, last_name, email, profile_pic_url, username)
+    VALUES (s.cuid, s.first_name, s.last_name, s.email, s.profile_pic_url, s.username)
     """
 
     params = [
@@ -80,15 +127,19 @@ def upsert_user(cuid: str, email: str, first_name: str, last_name: Optional[str]
         bigquery.ScalarQueryParameter("last_name", "STRING", last_name),
         bigquery.ScalarQueryParameter("email", "STRING", email),
         bigquery.ScalarQueryParameter("profile_pic_url", "STRING", profile_pic_url),
+        bigquery.ScalarQueryParameter("username", "STRING", username),
     ]
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     client.query(query, job_config=job_config).result()
-    return {
+    
+    # Fetch the updated user to return current state
+    return get_existing_user(email) or {
         "cuid": cuid,
         "first_name": first_name,
         "last_name": last_name,
         "email": email,
         "profile_pic_url": profile_pic_url,
+        "username": username,
     }
 
 
@@ -113,6 +164,22 @@ def main(request):
         cuid = claims.get("sub")
         email = claims.get("email")
 
+        if not cuid or not email:
+            return error_response("Invalid token: missing cuid or email", 400, request)
+
+        # Check if user is setting/updating username
+        requested_username = body.get("username")
+        if requested_username:
+            # Validate username length
+            if len(requested_username) < 3:
+                return error_response("Username must be at least 3 characters", 400, request)
+            
+            # Check if username is available (skip check if it's the user's current username)
+            existing_user = get_existing_user(email)
+            if existing_user and existing_user.get("username") != requested_username:
+                if not check_username_available(requested_username):
+                    return error_response("Username already taken", 409, request)
+
         # Prefer explicit body overrides, else map Google fields
         name = body.get("name") or claims.get("name")
         first_name_override = body.get("first_name")
@@ -123,14 +190,20 @@ def main(request):
         else:
             first_name, last_name = split_name(name)
 
+        if not first_name:
+            return error_response("missing required field: first_name", 400, request)
+
         profile_pic_url = body.get("profile_pic_url") or claims.get("picture")
 
-        if not cuid or not email or not first_name:
-            return error_response("missing required fields (cuid/email/first_name)", 400, request)
+        user = upsert_user(cuid, email, first_name, last_name, profile_pic_url, requested_username)
 
-        user = upsert_user(cuid, email, first_name, last_name, profile_pic_url)
+        # Determine if username setup is needed
+        needs_username = user.get("username") is None or user.get("username") == ""
 
-        resp = make_response(json.dumps({"user": user}), 200)
+        resp = make_response(json.dumps({
+            "user": user,
+            "needs_username": needs_username
+        }), 200)
         resp.headers.set("Content-Type", "application/json")
         return set_cors_headers(resp, request)
     except ValueError as ve:
