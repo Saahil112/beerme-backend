@@ -110,6 +110,42 @@ module "search_function" {
   depends_on = [google_project_service.services, module.bigquery, module.iam]
 }
 
+module "beer_likes_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "beer-likes"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "beer_likes"
+  source_main_py        = "beer_likes.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
+module "get_beer_like_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "get-beer-like"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "get_beer_like"
+  source_main_py        = "get_beer_like.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
 module "auth_function" {
   source                = "./cloud_functions"
   project_id            = var.project_id
