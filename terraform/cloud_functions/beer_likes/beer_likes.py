@@ -99,6 +99,8 @@ def upsert_beer_like(
     user_rating: Optional[str],
     user_comments: Optional[str],
     ind_starred: Optional[bool],
+    ind_tried: Optional[bool],
+    ind_wishlist: Optional[bool],
 ) -> Dict[str, Any]:
     merge_sql = f"""
     MERGE `{table}` AS t
@@ -110,7 +112,10 @@ def upsert_beer_like(
         @ind_like_status AS ind_like_status,
         @user_rating AS user_rating,
         @user_comments AS user_comments,
-        @ind_starred AS ind_starred
+        @ind_starred AS ind_starred,
+        @ind_tried AS ind_tried,
+        @ind_wishlist AS ind_wishlist,
+        CURRENT_TIMESTAMP() AS current_ts
     ) AS s
     ON t.cuid = s.cuid AND t.beer_name = s.beer_name
     WHEN MATCHED THEN UPDATE SET
@@ -118,10 +123,13 @@ def upsert_beer_like(
       ind_like_status = COALESCE(s.ind_like_status, t.ind_like_status),
       user_rating = COALESCE(s.user_rating, t.user_rating),
       user_comments = COALESCE(s.user_comments, t.user_comments),
-      ind_starred = COALESCE(s.ind_starred, t.ind_starred)
+      ind_starred = COALESCE(s.ind_starred, t.ind_starred),
+      ind_tried = COALESCE(s.ind_tried, t.ind_tried),
+      ind_wishlist = COALESCE(s.ind_wishlist, t.ind_wishlist),
+      updated_at = s.current_ts
     WHEN NOT MATCHED THEN
-      INSERT (cuid, beer_name, beer_id, ind_like_status, user_rating, user_comments, ind_starred)
-      VALUES (s.cuid, s.beer_name, s.beer_id, s.ind_like_status, s.user_rating, s.user_comments, s.ind_starred)
+      INSERT (cuid, beer_name, beer_id, ind_like_status, user_rating, user_comments, ind_starred, ind_tried, ind_wishlist, created_at, updated_at)
+      VALUES (s.cuid, s.beer_name, s.beer_id, s.ind_like_status, s.user_rating, s.user_comments, s.ind_starred, s.ind_tried, s.ind_wishlist, s.current_ts, s.current_ts)
     """
 
     params = [
@@ -132,19 +140,36 @@ def upsert_beer_like(
         bigquery.ScalarQueryParameter("user_rating", "STRING", user_rating),
         bigquery.ScalarQueryParameter("user_comments", "STRING", user_comments),
         bigquery.ScalarQueryParameter("ind_starred", "BOOL", ind_starred),
+        bigquery.ScalarQueryParameter("ind_tried", "BOOL", ind_tried),
+        bigquery.ScalarQueryParameter("ind_wishlist", "BOOL", ind_wishlist),
     ]
     merge_config = bigquery.QueryJobConfig(query_parameters=params)
     client.query(merge_sql, job_config=merge_config).result()
 
     select_sql = f"""
-    SELECT cuid, beer_name, beer_id, ind_like_status, user_rating, user_comments, ind_starred
+    SELECT cuid, beer_name, beer_id, ind_like_status, user_rating, user_comments, ind_starred, ind_tried, ind_wishlist, created_at, updated_at
     FROM `{table}`
     WHERE cuid = @cuid AND beer_name = @beer_name
     LIMIT 1
     """
     select_config = bigquery.QueryJobConfig(query_parameters=params[:2])
     rows = list(client.query(select_sql, job_config=select_config).result())
-    return dict(rows[0]) if rows else {}
+    if rows:
+        row = rows[0]
+        return {
+            "cuid": row.cuid,
+            "beer_name": row.beer_name,
+            "beer_id": row.beer_id,
+            "ind_like_status": row.ind_like_status,
+            "user_rating": row.user_rating,
+            "user_comments": row.user_comments,
+            "ind_starred": row.ind_starred,
+            "ind_tried": row.ind_tried,
+            "ind_wishlist": row.ind_wishlist,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+    return {}
 
 
 def main(request):
@@ -170,6 +195,8 @@ def main(request):
         beer_id = normalize_string(body.get("beer_id"))
         ind_like_status = to_bool_or_none(body.get("ind_like_status"))
         ind_starred = to_bool_or_none(body.get("ind_starred"))
+        ind_tried = to_bool_or_none(body.get("ind_tried"))
+        ind_wishlist = to_bool_or_none(body.get("ind_wishlist"))
         user_rating = parse_rating(body.get("user_rating"))
         user_comments = normalize_string(body.get("user_comments"))
 
@@ -180,10 +207,10 @@ def main(request):
 
         has_mutations = any(
             value is not None
-            for value in [beer_id, ind_like_status, ind_starred, user_rating, user_comments]
+            for value in [beer_id, ind_like_status, ind_starred, ind_tried, ind_wishlist, user_rating, user_comments]
         )
         if not has_mutations:
-            return error_response("At least one of ind_like_status, ind_starred, user_rating, user_comments, or beer_id must be provided", 400, request)
+            return error_response("At least one of ind_like_status, ind_starred, ind_tried, ind_wishlist, user_rating, user_comments, or beer_id must be provided", 400, request)
 
         record = upsert_beer_like(
             BEER_LIKES_TABLE,
@@ -194,6 +221,8 @@ def main(request):
             user_rating,
             user_comments,
             ind_starred,
+            ind_tried,
+            ind_wishlist,
         )
 
         resp = make_response(json.dumps({"like": record}), 200)

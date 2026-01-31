@@ -70,7 +70,7 @@ def normalize_string(value: Any) -> Optional[str]:
 
 def fetch_beer_like(table: str, cuid: str, beer_name: str) -> Optional[Dict[str, Any]]:
     query = f"""
-    SELECT cuid, beer_name, beer_id, ind_like_status, ind_starred, user_rating, user_comments
+    SELECT cuid, beer_name, beer_id, ind_like_status, ind_starred, ind_tried, ind_wishlist, user_rating, user_comments, created_at, updated_at
     FROM `{table}`
     WHERE cuid = @cuid AND beer_name = @beer_name
     LIMIT 1
@@ -81,7 +81,22 @@ def fetch_beer_like(table: str, cuid: str, beer_name: str) -> Optional[Dict[str,
     ]
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     rows = list(client.query(query, job_config=job_config).result())
-    return dict(rows[0]) if rows else None
+    if rows:
+        row = rows[0]
+        return {
+            "cuid": row.cuid,
+            "beer_name": row.beer_name,
+            "beer_id": row.beer_id,
+            "ind_like_status": row.ind_like_status,
+            "ind_starred": row.ind_starred,
+            "ind_tried": row.ind_tried,
+            "ind_wishlist": row.ind_wishlist,
+            "user_rating": row.user_rating,
+            "user_comments": row.user_comments,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+    return None
 
 
 def main(request):

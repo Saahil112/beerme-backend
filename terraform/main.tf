@@ -146,6 +146,24 @@ module "get_beer_like_function" {
   depends_on = [google_project_service.services, module.bigquery]
 }
 
+module "list_beer_likes_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "list-beer-likes"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "list_beer_likes"
+  source_main_py        = "list_beer_likes.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
 module "auth_function" {
   source                = "./cloud_functions"
   project_id            = var.project_id
@@ -187,6 +205,154 @@ module "oauth_login_function" {
     DATASET_ID          = var.dataset_id
   }
   depends_on = [google_project_service.services, module.bigquery]
+}
+
+module "compute_user_counts_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "compute-user-counts"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "compute_user_counts"
+  source_main_py        = "compute_user_counts.py"
+  entry_point           = "main"
+  extra_env = {
+    PROJECT_ID = var.project_id
+    DATASET_ID = var.dataset_id
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
+module "get_level_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "get-level"
+  runtime               = var.function_runtime
+  service_account_email = module.iam.service_account_email
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "get_level"
+  source_main_py        = "get_level.py"
+  entry_point           = "main"
+  extra_env = {
+    PROJECT_ID = var.project_id
+    DATASET_ID = var.dataset_id
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.iam]
+}
+
+module "update_user_level_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "update-user-level"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "update_user_level"
+  source_main_py        = "update_user_level.py"
+  entry_point           = "main"
+  extra_env = {
+    PROJECT_ID = var.project_id
+    DATASET_ID = var.dataset_id
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
+module "fetch_user_details_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "fetch-user-details"
+  runtime               = var.function_runtime
+  service_account_email = module.iam.service_account_email
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "fetch_user_details"
+  source_main_py        = "fetch_user_details.py"
+  entry_point           = "main"
+  extra_env = {
+    PROJECT_ID = var.project_id
+    DATASET_ID = var.dataset_id
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.iam]
+}
+
+module "buddies_search_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "buddies-search"
+  runtime               = var.function_runtime
+  service_account_email = module.iam.service_account_email
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "buddies_search"
+  source_main_py        = "buddies_search.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.iam]
+}
+
+module "buddies_manage_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "buddies-manage"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "buddies_manage"
+  source_main_py        = "buddies_manage.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
+module "buddies_list_pending_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "buddies-list-pending"
+  runtime               = var.function_runtime
+  service_account_email = module.iam.service_account_email
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "buddies_list_pending"
+  source_main_py        = "buddies_list_pending.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.iam]
+}
+
+module "buddies_list_friends_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "buddies-list-friends"
+  runtime               = var.function_runtime
+  service_account_email = module.iam.service_account_email
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "buddies_list_friends"
+  source_main_py        = "buddies_list_friends.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.iam]
 }
 
 # Grant table-level write on users to writer SA

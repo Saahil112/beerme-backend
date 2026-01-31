@@ -10,7 +10,12 @@ from google.auth.transport import requests
 
 client = bigquery.Client()
 
-ALLOWED_ORIGINS = {"https://innerbeer.com", "https://www.innerbeer.com", "http://localhost:3000", "http://127.0.0.1:3000"}
+ALLOWED_ORIGINS = {
+    "https://innerbeer.com",
+    "https://www.innerbeer.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+}
 OAUTH_CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
@@ -39,6 +44,7 @@ def error_response(message: str, status: int = 400, request=None):
 
 from typing import Tuple
 
+
 def split_name(full_name: Optional[str]) -> Tuple[str, Optional[str]]:
     if not full_name:
         return "", None
@@ -54,9 +60,9 @@ def get_existing_user(email: str) -> Optional[Dict[str, Any]]:
     """Fetch existing user by email"""
     if not USERS_TABLE:
         raise ValueError("Server misconfigured: PROJECT_ID/DATASET_ID not set")
-    
+
     query = f"""
-    SELECT cuid, first_name, last_name, email, profile_pic_url, username
+    SELECT cuid, first_name, last_name, email, profile_pic_url, username, created_at, updated_at, ind_first_time_user, user_level, count_brews_chugged
     FROM `{USERS_TABLE}`
     WHERE email = @email
     LIMIT 1
@@ -64,7 +70,7 @@ def get_existing_user(email: str) -> Optional[Dict[str, Any]]:
     params = [bigquery.ScalarQueryParameter("email", "STRING", email)]
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     rows = list(client.query(query, job_config=job_config).result())
-    
+
     if rows:
         row = rows[0]
         return {
@@ -74,6 +80,17 @@ def get_existing_user(email: str) -> Optional[Dict[str, Any]]:
             "email": row.email,
             "profile_pic_url": row.profile_pic_url,
             "username": row.username,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "ind_first_time_user": bool(row.ind_first_time_user)
+            if row.ind_first_time_user is not None
+            else False,
+            "user_level": int(row.user_level)
+            if getattr(row, "user_level", None) is not None
+            else None,
+            "count_brews_chugged": int(row.count_brews_chugged)
+            if getattr(row, "count_brews_chugged", None) is not None
+            else 0,
         }
     return None
 
@@ -82,7 +99,7 @@ def check_username_available(username: str) -> bool:
     """Check if a username is available"""
     if not USERS_TABLE:
         raise ValueError("Server misconfigured: PROJECT_ID/DATASET_ID not set")
-    
+
     query = f"""
     SELECT COUNT(*) as count
     FROM `{USERS_TABLE}`
@@ -91,11 +108,18 @@ def check_username_available(username: str) -> bool:
     params = [bigquery.ScalarQueryParameter("username", "STRING", username)]
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     rows = list(client.query(query, job_config=job_config).result())
-    
+
     return rows[0].count == 0
 
 
-def upsert_user(cuid: str, email: str, first_name: str, last_name: Optional[str], profile_pic_url: Optional[str], username: Optional[str] = None) -> Dict[str, Any]:
+def upsert_user(
+    cuid: str,
+    email: str,
+    first_name: str,
+    last_name: Optional[str],
+    profile_pic_url: Optional[str],
+    username: Optional[str] = None,
+) -> Dict[str, Any]:
     if not USERS_TABLE:
         raise ValueError("Server misconfigured: PROJECT_ID/DATASET_ID not set")
 
@@ -108,7 +132,8 @@ def upsert_user(cuid: str, email: str, first_name: str, last_name: Optional[str]
         @last_name AS last_name,
         @email AS email,
         @profile_pic_url AS profile_pic_url,
-        @username AS username
+        @username AS username,
+        CURRENT_TIMESTAMP() AS current_ts
     ) AS s
     ON t.email = s.email
     WHEN MATCHED THEN UPDATE SET
@@ -116,9 +141,10 @@ def upsert_user(cuid: str, email: str, first_name: str, last_name: Optional[str]
       t.first_name = s.first_name,
       t.last_name = s.last_name,
       t.profile_pic_url = s.profile_pic_url,
-      t.username = COALESCE(s.username, t.username)
-    WHEN NOT MATCHED THEN INSERT (cuid, first_name, last_name, email, profile_pic_url, username)
-    VALUES (s.cuid, s.first_name, s.last_name, s.email, s.profile_pic_url, s.username)
+      t.username = COALESCE(s.username, t.username),
+      t.updated_at = s.current_ts
+    WHEN NOT MATCHED THEN INSERT (cuid, first_name, last_name, email, profile_pic_url, username, created_at, updated_at, ind_first_time_user)
+    VALUES (s.cuid, s.first_name, s.last_name, s.email, s.profile_pic_url, s.username, s.current_ts, s.current_ts, TRUE)
     """
 
     params = [
@@ -131,7 +157,7 @@ def upsert_user(cuid: str, email: str, first_name: str, last_name: Optional[str]
     ]
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     client.query(query, job_config=job_config).result()
-    
+
     # Fetch the updated user to return current state
     return get_existing_user(email) or {
         "cuid": cuid,
@@ -140,6 +166,9 @@ def upsert_user(cuid: str, email: str, first_name: str, last_name: Optional[str]
         "email": email,
         "profile_pic_url": profile_pic_url,
         "username": username,
+        "ind_first_time_user": True,
+        "user_level": None,
+        "count_brews_chugged": 0,
     }
 
 
@@ -172,8 +201,10 @@ def main(request):
         if requested_username:
             # Validate username length
             if len(requested_username) < 3:
-                return error_response("Username must be at least 3 characters", 400, request)
-            
+                return error_response(
+                    "Username must be at least 3 characters", 400, request
+                )
+
             # Check if username is available (skip check if it's the user's current username)
             existing_user = get_existing_user(email)
             if existing_user and existing_user.get("username") != requested_username:
@@ -195,15 +226,16 @@ def main(request):
 
         profile_pic_url = body.get("profile_pic_url") or claims.get("picture")
 
-        user = upsert_user(cuid, email, first_name, last_name, profile_pic_url, requested_username)
+        user = upsert_user(
+            cuid, email, first_name, last_name, profile_pic_url, requested_username
+        )
 
         # Determine if username setup is needed
         needs_username = user.get("username") is None or user.get("username") == ""
 
-        resp = make_response(json.dumps({
-            "user": user,
-            "needs_username": needs_username
-        }), 200)
+        resp = make_response(
+            json.dumps({"user": user, "needs_username": needs_username}), 200
+        )
         resp.headers.set("Content-Type", "application/json")
         return set_cors_headers(resp, request)
     except ValueError as ve:
