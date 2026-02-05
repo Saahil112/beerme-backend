@@ -19,7 +19,9 @@ JWT_SECRET = os.environ.get("JWT_SECRET")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
 USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
-BUDDIES_TABLE = f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
+BUDDIES_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
+)
 REQUIRED_SCOPE = "recommendations:read"
 
 
@@ -60,17 +62,20 @@ def verify_token(request) -> Optional[Dict[str, Any]]:
         return None
 
 
-def search_users_by_username(prefix: str, exclude_cuid: str = None, limit: int = 5) -> List[Dict[str, Any]]:
+def search_users_by_username(
+    prefix: str, exclude_cuid: str = None, limit: int = 5
+) -> List[Dict[str, Any]]:
     if not USERS_TABLE:
         raise ValueError("Server misconfigured: missing PROJECT_ID or DATASET_ID")
-    
+
     query = f"""
-    SELECT 
+    SELECT
     distinct users.cuid
     , users.username
     , users.first_name
     , users.last_name
     , users.profile_pic_url
+    , users.user_level
     , buddies.status AS buddy_status
     FROM `{USERS_TABLE}` users
     LEFT JOIN `{BUDDIES_TABLE}` AS buddies ON users.cuid = buddies.friend_cuid
@@ -120,8 +125,10 @@ def main(request):
 
         # Extract current user's cuid from JWT claims to exclude from results
         current_user_cuid = claims.get("sub")
-        
-        results = search_users_by_username(q, exclude_cuid=current_user_cuid, limit=limit)
+
+        results = search_users_by_username(
+            q, exclude_cuid=current_user_cuid, limit=limit
+        )
         resp = make_response(json.dumps({"results": results}), 200)
         resp.headers.set("Content-Type", "application/json")
         return set_cors_headers(resp, request)

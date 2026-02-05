@@ -12,7 +12,7 @@ variable "region" {
 variable "dataset_id" {
   type        = string
   description = "BigQuery dataset ID"
-  default     = "innerbeer"
+  default     = "dbt_saahil"
 }
 
 variable "function_name" {

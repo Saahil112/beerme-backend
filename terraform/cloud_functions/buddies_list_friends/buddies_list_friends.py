@@ -19,7 +19,12 @@ JWT_SECRET = os.environ.get("JWT_SECRET")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
 USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
-BUDDIES_TABLE = f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
+BUDDIES_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
+)
+LEVELS_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.levels" if PROJECT_ID and DATASET_ID else None
+)
 REQUIRED_SCOPE = "recommendations:read"
 
 
@@ -61,7 +66,7 @@ def verify_token(request) -> Optional[Dict[str, Any]]:
 
 
 def list_friends(cuid: str, limit: int = 50) -> List[Dict[str, Any]]:
-    if not USERS_TABLE or not BUDDIES_TABLE:
+    if not USERS_TABLE or not BUDDIES_TABLE or not LEVELS_TABLE:
         raise ValueError("Server misconfigured: missing PROJECT_ID or DATASET_ID")
 
     query = f"""
@@ -71,12 +76,18 @@ def list_friends(cuid: str, limit: int = 50) -> List[Dict[str, Any]]:
       u.first_name,
       u.last_name,
       u.profile_pic_url,
+      u.user_level,
       b.status,
       b.requested_at,
-      b.accepted_at
+      b.accepted_at,
+      l.level_rank,
+      l.level_name,
+      l.level_badge_img
     FROM `{BUDDIES_TABLE}` AS b
     LEFT JOIN `{USERS_TABLE}` AS u
       ON b.friend_cuid = u.cuid
+    LEFT JOIN `{LEVELS_TABLE}` as l
+        on u.user_level = l.level_rank
     WHERE b.cuid = @cuid
       AND b.status IN ('accepted', 'pending')
     ORDER BY b.status DESC, b.requested_at DESC

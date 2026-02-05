@@ -84,7 +84,7 @@ def get_existing_user(email: str) -> Optional[Dict[str, Any]]:
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
             "ind_first_time_user": bool(row.ind_first_time_user)
             if row.ind_first_time_user is not None
-            else False,
+            else True,
             "user_level": int(row.user_level)
             if getattr(row, "user_level", None) is not None
             else None,

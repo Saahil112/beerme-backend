@@ -8,6 +8,7 @@ from flask import make_response
 
 ALLOWED_ORIGIN = "https://innerbeer.com"
 
+
 def set_cors_headers(response):
     """Set CORS headers on response"""
     response.headers.set("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
@@ -16,6 +17,7 @@ def set_cors_headers(response):
     response.headers.set("Access-Control-Max-Age", "3600")
     response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin")
     return response
+
 
 JWT_SECRET = os.environ.get("JWT_SECRET")
 USER_CREDENTIALS_RAW = os.environ.get("USER_CREDENTIALS", "{}")
@@ -27,7 +29,7 @@ except Exception:
     USER_CREDENTIALS = {}
 
 
-def issue_token(email: str) -> str:
+def issue_token(email: str, cuid: str | None = None) -> str:
     now = int(time.time())
     payload: Dict[str, Any] = {
         "sub": email,
@@ -35,14 +37,21 @@ def issue_token(email: str) -> str:
         "exp": now + TOKEN_TTL_SECONDS,
         "scopes": ["recommendations:read"],
     }
+    # Include the cuid claim when provided
+    if cuid:
+        payload["cuid"] = cuid
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 
 def main(request):
     # Debug: Force flush to stderr for immediate logging
-    print(f"Request method: '{request.method}', type: {type(request.method)}", file=sys.stderr, flush=True)
+    print(
+        f"Request method: '{request.method}', type: {type(request.method)}",
+        file=sys.stderr,
+        flush=True,
+    )
     print(f"Request headers: {dict(request.headers)}", file=sys.stderr, flush=True)
-    
+
     # Handle CORS preflight
     if request.method == "OPTIONS" or request.method.upper() == "OPTIONS":
         print("Handling OPTIONS request", file=sys.stderr, flush=True)
@@ -51,20 +60,28 @@ def main(request):
 
     print("Not an OPTIONS request, processing normally", file=sys.stderr, flush=True)
     if not JWT_SECRET:
-        response = make_response(json.dumps({"error": "Server misconfigured: missing JWT_SECRET"}), 500)
+        response = make_response(
+            json.dumps({"error": "Server misconfigured: missing JWT_SECRET"}), 500
+        )
         response.headers.set("Content-Type", "application/json")
         return set_cors_headers(response)
 
     data = request.get_json(silent=True) or {}
     email = data.get("email")
     password = data.get("password")
+    cuid = data.get("cuid")
 
     if not email or not password:
-        response = make_response(json.dumps({
-            "error": "email and password required",
-            "debug_method": str(request.method),
-            "debug_headers": str(dict(request.headers))
-        }), 400)
+        response = make_response(
+            json.dumps(
+                {
+                    "error": "email and password required",
+                    "debug_method": str(request.method),
+                    "debug_headers": str(dict(request.headers)),
+                }
+            ),
+            400,
+        )
         response.headers.set("Content-Type", "application/json")
         return set_cors_headers(response)
 
@@ -80,12 +97,17 @@ def main(request):
         response.headers.set("Content-Type", "application/json")
         return set_cors_headers(response)
 
-    token = issue_token(email)
-    response = make_response(json.dumps({
-        "token": token,
-        "token_type": "Bearer",
-        "expires_in": TOKEN_TTL_SECONDS,
-        "scope": "recommendations:read"
-    }), 200)
+    token = issue_token(email, cuid=cuid)
+    response = make_response(
+        json.dumps(
+            {
+                "token": token,
+                "token_type": "Bearer",
+                "expires_in": TOKEN_TTL_SECONDS,
+                "scope": "recommendations:read",
+            }
+        ),
+        200,
+    )
     response.headers.set("Content-Type", "application/json")
     return set_cors_headers(response)

@@ -245,6 +245,25 @@ module "get_level_function" {
   depends_on = [google_project_service.services, module.bigquery, module.iam]
 }
 
+module "get_all_levels_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "get-all-levels"
+  runtime               = var.function_runtime
+  service_account_email = module.iam.service_account_email
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "get_all_levels"
+  source_main_py        = "get_all_levels.py"
+  entry_point           = "main"
+  extra_env = {
+    PROJECT_ID = var.project_id
+    DATASET_ID = var.dataset_id
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.iam]
+}
+
 module "update_user_level_function" {
   source                = "./cloud_functions"
   project_id            = var.project_id
@@ -256,6 +275,25 @@ module "update_user_level_function" {
   bucket_name           = google_storage_bucket.function_source.name
   source_dir            = "update_user_level"
   source_main_py        = "update_user_level.py"
+  entry_point           = "main"
+  extra_env = {
+    PROJECT_ID = var.project_id
+    DATASET_ID = var.dataset_id
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
+module "toggle_onboarding_complete_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "toggle-onboarding-complete"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "toggle_onboarding_complete"
+  source_main_py        = "toggle_onboarding_complete.py"
   entry_point           = "main"
   extra_env = {
     PROJECT_ID = var.project_id
@@ -389,7 +427,7 @@ resource "google_bigquery_dataset_iam_member" "writer_sa_dataset_editor" {
 # Ensure the function's service account can read the dataset
 resource "google_bigquery_dataset_iam_member" "function_dataset_viewer" {
   project    = var.project_id
-  dataset_id = "dbt_saahil"
+  dataset_id = var.dataset_id
   role       = "roles/bigquery.dataViewer"
   member     = "serviceAccount:${module.iam.service_account_email}"
 }
