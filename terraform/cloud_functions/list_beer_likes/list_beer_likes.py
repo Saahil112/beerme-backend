@@ -18,8 +18,12 @@ ALLOWED_ORIGINS = {
 JWT_SECRET = os.environ.get("JWT_SECRET")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
-BEER_LIKES_TABLE = f"{PROJECT_ID}.{DATASET_ID}.beer_likes" if PROJECT_ID and DATASET_ID else None
-COMPILED_DATA_TABLE = f"{PROJECT_ID}.{DATASET_ID}.compiled_data" if PROJECT_ID and DATASET_ID else None
+BEER_LIKES_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.beer_likes" if PROJECT_ID and DATASET_ID else None
+)
+COMPILED_DATA_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.compiled_data" if PROJECT_ID and DATASET_ID else None
+)
 REQUIRED_SCOPE = "recommendations:read"
 
 
@@ -81,7 +85,9 @@ def parse_limit(value: Any) -> Optional[int]:
     return min(limit, 1000)
 
 
-def fetch_beer_likes(table: str, compiled_table: str, cuid: str, limit: Optional[int]) -> List[Dict[str, Any]]:
+def fetch_beer_likes(
+    table: str, compiled_table: str, cuid: str, limit: Optional[int]
+) -> List[Dict[str, Any]]:
     query = f"""
     SELECT
       l.cuid,
@@ -128,7 +134,9 @@ def main(request):
     if not JWT_SECRET:
         return error_response("Server misconfigured: missing JWT_SECRET", 500, request)
     if not BEER_LIKES_TABLE or not COMPILED_DATA_TABLE:
-        return error_response("Server misconfigured: missing PROJECT_ID or DATASET_ID", 500, request)
+        return error_response(
+            "Server misconfigured: missing PROJECT_ID or DATASET_ID", 500, request
+        )
 
     claims = verify_token(request)
     if claims is None:
@@ -139,11 +147,20 @@ def main(request):
 
     try:
         body = request.get_json(silent=True) or {}
-        cuid = normalize_string(body.get("cuid")) or ""
         limit = parse_limit(body.get("limit"))
 
+        # Derive cuid from verified JWT claims only
+        cuid = None
+        if isinstance(claims, dict):
+            cuid = claims.get("cuid") or claims.get("sub") or claims.get("email")
+        cuid = normalize_string(cuid) or ""
+
         if not cuid:
-            return error_response("Missing required field: cuid", 400, request)
+            return error_response(
+                "Missing required field: cuid (derive from Authorization token)",
+                400,
+                request,
+            )
 
         records = fetch_beer_likes(BEER_LIKES_TABLE, COMPILED_DATA_TABLE, cuid, limit)
         resp = make_response(json.dumps({"likes": records}), 200)

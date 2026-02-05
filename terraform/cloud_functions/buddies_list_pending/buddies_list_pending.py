@@ -19,7 +19,9 @@ JWT_SECRET = os.environ.get("JWT_SECRET")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
 USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
-BUDDIES_TABLE = f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
+BUDDIES_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
+)
 REQUIRED_SCOPE = "recommendations:read"
 
 
@@ -117,10 +119,17 @@ def main(request):
         except (TypeError, ValueError):
             limit = 50
 
-        # Prefer explicit cuid from body; fallback to JWT `sub`
-        cuid = (body.get("cuid") or claims.get("sub") or "").strip()
+        # Derive cuid strictly from JWT claims (do not accept from frontend)
+        cuid = None
+        if isinstance(claims, dict):
+            cuid = claims.get("cuid") or claims.get("sub") or claims.get("email")
+        cuid = (cuid or "").strip()
         if not cuid:
-            return error_response("Missing required field: cuid", 400, request)
+            return error_response(
+                "Missing required field: cuid (derive from Authorization token)",
+                400,
+                request,
+            )
 
         results = list_pending_requests(cuid, limit)
         resp = make_response(json.dumps({"requests": results}), 200)

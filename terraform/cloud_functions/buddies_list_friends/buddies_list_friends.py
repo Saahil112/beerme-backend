@@ -132,10 +132,17 @@ def main(request):
         except (TypeError, ValueError):
             limit = 50
 
-        # Prefer explicit cuid from body; fallback to JWT `sub`
-        cuid = (body.get("cuid") or claims.get("sub") or "").strip()
+        # Derive cuid strictly from JWT claims (do not accept from frontend)
+        cuid = None
+        if isinstance(claims, dict):
+            cuid = claims.get("cuid") or claims.get("sub") or claims.get("email")
+        cuid = (cuid or "").strip()
         if not cuid:
-            return error_response("Missing required field: cuid", 400, request)
+            return error_response(
+                "Missing required field: cuid (derive from Authorization token)",
+                400,
+                request,
+            )
 
         results = list_friends(cuid, limit)
         resp = make_response(json.dumps({"friends": results}), 200)

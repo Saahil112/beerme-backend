@@ -1,8 +1,9 @@
 import os
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from flask import make_response
+import jwt
 from google.cloud import bigquery
 
 client = bigquery.Client()
@@ -17,6 +18,26 @@ ALLOWED_ORIGINS = {
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
 USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
+REQUIRED_SCOPE = "recommendations:read"
+
+
+def verify_token(request) -> Optional[Dict[str, Any]]:
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    try:
+        decoded = jwt.decode(token, os.environ.get("JWT_SECRET"), algorithms=["HS256"])
+        scopes = decoded.get("scopes", [])
+        if REQUIRED_SCOPE not in scopes:
+            return None
+        return decoded
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
 
 
 def set_cors_headers(response, request=None):
@@ -60,10 +81,18 @@ def main(request):
         return set_cors_headers(make_response("", 204), request)
 
     try:
-        body = request.get_json(silent=True) or {}
-        cuid = body.get("cuid")
+        # Require Authorization token and derive cuid from it
+        claims = verify_token(request)
+        if claims is None:
+            return error_response("Unauthorized", 401, request)
+
+        cuid = claims.get("cuid") or claims.get("sub") or claims.get("email")
         if not cuid:
-            return error_response("Missing required field: cuid", 400, request)
+            return error_response(
+                "Missing required field: cuid (derive from Authorization token)",
+                400,
+                request,
+            )
 
         affected = set_onboarding_complete(str(cuid))
         resp = make_response(json.dumps({"updated": affected}), 200)

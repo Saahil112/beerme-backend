@@ -18,7 +18,9 @@ ALLOWED_ORIGINS = {
 JWT_SECRET = os.environ.get("JWT_SECRET")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
-BUDDIES_TABLE = f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
+BUDDIES_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
+)
 REQUIRED_SCOPE = "recommendations:read"
 
 
@@ -179,7 +181,9 @@ def main(request):
     if not JWT_SECRET:
         return error_response("Server misconfigured: missing JWT_SECRET", 500, request)
     if not BUDDIES_TABLE:
-        return error_response("Server misconfigured: missing PROJECT_ID or DATASET_ID", 500, request)
+        return error_response(
+            "Server misconfigured: missing PROJECT_ID or DATASET_ID", 500, request
+        )
 
     claims = verify_token(request)
     if claims is None:
@@ -191,13 +195,21 @@ def main(request):
     try:
         body = request.get_json(silent=True) or {}
         action = (body.get("action") or "").strip().lower()
-        sender_cuid = normalize_string(body.get("sender_cuid")) or ""
+        # Derive sender cuid from JWT claims (do not accept sender_cuid from frontend)
+        sender_cuid = None
+        if isinstance(claims, dict):
+            sender_cuid = claims.get("cuid") or claims.get("sub") or claims.get("email")
+        sender_cuid = normalize_string(sender_cuid) or ""
         receiver_cuid = normalize_string(body.get("receiver_cuid")) or ""
 
         if action not in {"send", "accept"}:
             return error_response("action must be 'send' or 'accept'", 400, request)
         if not sender_cuid or not receiver_cuid:
-            return error_response("sender_cuid and receiver_cuid are required", 400, request)
+            return error_response(
+                "sender_cuid (from token) and receiver_cuid (in body) are required",
+                400,
+                request,
+            )
         if sender_cuid == receiver_cuid:
             return error_response("sender and receiver must be different", 400, request)
 

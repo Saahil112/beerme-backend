@@ -3,6 +3,7 @@ import json
 from typing import Any, Dict, Optional
 
 from flask import make_response
+import jwt
 from google.cloud import bigquery
 
 client = bigquery.Client()
@@ -20,6 +21,26 @@ BEER_LIKES_TABLE = (
     f"{PROJECT_ID}.{DATASET_ID}.beer_likes" if PROJECT_ID and DATASET_ID else None
 )
 USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
+REQUIRED_SCOPE = "recommendations:read"
+
+
+def verify_token(request) -> Optional[Dict[str, Any]]:
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    try:
+        decoded = jwt.decode(token, os.environ.get("JWT_SECRET"), algorithms=["HS256"])
+        scopes = decoded.get("scopes", [])
+        if REQUIRED_SCOPE not in scopes:
+            return None
+        return decoded
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
 
 
 def set_cors_headers(response, request=None):
@@ -54,8 +75,9 @@ def recompute_counts_for_user(cuid: str) -> Dict[str, int]:
       COALESCE(SUM(CASE WHEN (ind_like_status = TRUE OR LOWER(CAST(ind_like_status AS STRING)) IN ('liked','like','1','true')) THEN 1 ELSE 0 END), 0) AS count_brews_liked,
       COALESCE(SUM(CASE WHEN (ind_like_status = FALSE OR LOWER(CAST(ind_like_status AS STRING)) IN ('disliked','dislike','-1','false')) THEN 1 ELSE 0 END), 0) AS count_brews_disliked,
       COALESCE(SUM(CASE WHEN user_rating IS NOT NULL THEN 1 ELSE 0 END), 0) AS count_brews_rated,
-      COALESCE(SUM(CASE WHEN ind_starred = TRUE THEN 1 ELSE 0 END), 0) AS count_brews_starred,
-      COALESCE(SUM(CASE WHEN ind_wishlist = TRUE THEN 1 ELSE 0 END), 0) AS count_brews_wishlisted
+            COALESCE(SUM(CASE WHEN user_comments IS NOT NULL THEN 1 ELSE 0 END), 0) AS count_brews_commented,
+            COALESCE(SUM(CASE WHEN ind_starred = TRUE THEN 1 ELSE 0 END), 0) AS count_brews_starred,
+            COALESCE(SUM(CASE WHEN ind_wishlist = TRUE THEN 1 ELSE 0 END), 0) AS count_brews_wishlisted
     FROM `{BEER_LIKES_TABLE}`
     WHERE cuid = @cuid
     """
@@ -69,6 +91,7 @@ def recompute_counts_for_user(cuid: str) -> Dict[str, int]:
             "count_brews_liked": 0,
             "count_brews_disliked": 0,
             "count_brews_rated": 0,
+            "count_brews_commented": 0,
             "count_brews_starred": 0,
             "count_brews_wishlisted": 0,
         }
@@ -79,6 +102,7 @@ def recompute_counts_for_user(cuid: str) -> Dict[str, int]:
             "count_brews_liked": int(row.count_brews_liked or 0),
             "count_brews_disliked": int(row.count_brews_disliked or 0),
             "count_brews_rated": int(row.count_brews_rated or 0),
+            "count_brews_commented": int(getattr(row, "count_brews_commented", 0) or 0),
             "count_brews_starred": int(row.count_brews_starred or 0),
             "count_brews_wishlisted": int(row.count_brews_wishlisted or 0),
         }
@@ -91,6 +115,7 @@ def recompute_counts_for_user(cuid: str) -> Dict[str, int]:
       count_brews_liked = @count_brews_liked,
       count_brews_disliked = @count_brews_disliked,
       count_brews_rated = @count_brews_rated,
+            count_brews_commented = @count_brews_commented,
       count_brews_starred = @count_brews_starred,
       count_brews_wishlisted = @count_brews_wishlisted,
       updated_at = CURRENT_TIMESTAMP()
@@ -111,6 +136,9 @@ def recompute_counts_for_user(cuid: str) -> Dict[str, int]:
             "count_brews_rated", "INT64", counts["count_brews_rated"]
         ),
         bigquery.ScalarQueryParameter(
+            "count_brews_commented", "INT64", counts["count_brews_commented"]
+        ),
+        bigquery.ScalarQueryParameter(
             "count_brews_starred", "INT64", counts["count_brews_starred"]
         ),
         bigquery.ScalarQueryParameter(
@@ -129,10 +157,18 @@ def main(request):
         return set_cors_headers(make_response("", 204), request)
 
     try:
-        body = request.get_json(silent=True) or {}
-        cuid = body.get("cuid")
+        # Require Authorization token and derive cuid from it
+        claims = verify_token(request)
+        if claims is None:
+            return error_response("Unauthorized", 401, request)
+
+        cuid = claims.get("cuid") or claims.get("sub") or claims.get("email")
         if not cuid:
-            return error_response("Missing required field: cuid", 400, request)
+            return error_response(
+                "Missing required field: cuid (derive from Authorization token)",
+                400,
+                request,
+            )
 
         counts = recompute_counts_for_user(cuid)
         resp = make_response(json.dumps({"counts": counts}), 200)

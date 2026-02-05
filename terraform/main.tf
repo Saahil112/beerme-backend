@@ -222,6 +222,7 @@ module "compute_user_counts_function" {
   extra_env = {
     PROJECT_ID = var.project_id
     DATASET_ID = var.dataset_id
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
   }
   depends_on = [google_project_service.services, module.bigquery]
 }
@@ -241,6 +242,7 @@ module "get_level_function" {
   extra_env = {
     PROJECT_ID = var.project_id
     DATASET_ID = var.dataset_id
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
   }
   depends_on = [google_project_service.services, module.bigquery, module.iam]
 }
@@ -260,6 +262,7 @@ module "get_all_levels_function" {
   extra_env = {
     PROJECT_ID = var.project_id
     DATASET_ID = var.dataset_id
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
   }
   depends_on = [google_project_service.services, module.bigquery, module.iam]
 }
@@ -279,6 +282,7 @@ module "update_user_level_function" {
   extra_env = {
     PROJECT_ID = var.project_id
     DATASET_ID = var.dataset_id
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
   }
   depends_on = [google_project_service.services, module.bigquery]
 }

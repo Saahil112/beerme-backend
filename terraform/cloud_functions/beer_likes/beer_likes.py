@@ -18,7 +18,9 @@ ALLOWED_ORIGINS = {
 JWT_SECRET = os.environ.get("JWT_SECRET")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
-BEER_LIKES_TABLE = f"{PROJECT_ID}.{DATASET_ID}.beer_likes" if PROJECT_ID and DATASET_ID else None
+BEER_LIKES_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.beer_likes" if PROJECT_ID and DATASET_ID else None
+)
 REQUIRED_SCOPE = "recommendations:read"
 
 
@@ -179,7 +181,9 @@ def main(request):
     if not JWT_SECRET:
         return error_response("Server misconfigured: missing JWT_SECRET", 500, request)
     if not BEER_LIKES_TABLE:
-        return error_response("Server misconfigured: missing PROJECT_ID or DATASET_ID", 500, request)
+        return error_response(
+            "Server misconfigured: missing PROJECT_ID or DATASET_ID", 500, request
+        )
 
     claims = verify_token(request)
     if claims is None:
@@ -190,7 +194,6 @@ def main(request):
 
     try:
         body = request.get_json(silent=True) or {}
-        cuid = normalize_string(body.get("cuid")) or ""
         beer_name = normalize_string(body.get("beer_name")) or ""
         beer_id = normalize_string(body.get("beer_id"))
         ind_like_status = to_bool_or_none(body.get("ind_like_status"))
@@ -200,17 +203,39 @@ def main(request):
         user_rating = parse_rating(body.get("user_rating"))
         user_comments = normalize_string(body.get("user_comments"))
 
+        # Derive cuid from verified JWT claims only
+        cuid = None
+        if isinstance(claims, dict):
+            cuid = claims.get("cuid") or claims.get("sub") or claims.get("email")
+        cuid = normalize_string(cuid) or ""
+
         if not cuid:
-            return error_response("Missing required field: cuid", 400, request)
+            return error_response(
+                "Missing required field: cuid (derive from Authorization token)",
+                400,
+                request,
+            )
         if not beer_name:
             return error_response("Missing required field: beer_name", 400, request)
 
         has_mutations = any(
             value is not None
-            for value in [beer_id, ind_like_status, ind_starred, ind_tried, ind_wishlist, user_rating, user_comments]
+            for value in [
+                beer_id,
+                ind_like_status,
+                ind_starred,
+                ind_tried,
+                ind_wishlist,
+                user_rating,
+                user_comments,
+            ]
         )
         if not has_mutations:
-            return error_response("At least one of ind_like_status, ind_starred, ind_tried, ind_wishlist, user_rating, user_comments, or beer_id must be provided", 400, request)
+            return error_response(
+                "At least one of ind_like_status, ind_starred, ind_tried, ind_wishlist, user_rating, user_comments, or beer_id must be provided",
+                400,
+                request,
+            )
 
         record = upsert_beer_like(
             BEER_LIKES_TABLE,

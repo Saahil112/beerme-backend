@@ -3,6 +3,7 @@ import json
 from typing import Any, Dict, Optional
 
 from flask import make_response
+import jwt
 from google.cloud import bigquery
 
 client = bigquery.Client()
@@ -17,6 +18,30 @@ ALLOWED_ORIGINS = {
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
 USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
+REQUIRED_SCOPE = "recommendations:read"
+JWT_SECRET = os.environ.get("JWT_SECRET")
+
+
+def verify_token(request) -> Optional[Dict[str, Any]]:
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    try:
+        if not JWT_SECRET:
+            # Missing server config for JWT secret
+            return None
+        decoded = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        scopes = decoded.get("scopes", [])
+        if REQUIRED_SCOPE not in scopes:
+            return None
+        return decoded
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
 
 
 def set_cors_headers(response, request=None):
@@ -42,7 +67,23 @@ def fetch_user_by_cuid(cuid: str) -> Optional[Dict[str, Any]]:
         raise ValueError("Server misconfigured: PROJECT_ID/DATASET_ID not set")
 
     query = f"""
-    SELECT cuid, first_name, last_name, email, profile_pic_url, username, created_at, updated_at, ind_first_time_user, user_level, count_brews_chugged
+    SELECT
+        first_name
+        , last_name
+        , email
+        , profile_pic_url
+        , username
+        , created_at
+        , updated_at
+        , ind_first_time_user
+        , user_level
+        , count_brews_chugged
+        , count_brews_commented
+        , count_brews_liked
+        , count_brews_disliked
+        , count_brews_rated
+        , count_brews_starred
+        , count_brews_wishlisted
     FROM `{USERS_TABLE}`
     WHERE cuid = @cuid
     LIMIT 1
@@ -54,7 +95,6 @@ def fetch_user_by_cuid(cuid: str) -> Optional[Dict[str, Any]]:
         return None
     row = rows[0]
     return {
-        "cuid": row.cuid,
         "first_name": row.first_name,
         "last_name": row.last_name,
         "email": row.email,
@@ -71,6 +111,24 @@ def fetch_user_by_cuid(cuid: str) -> Optional[Dict[str, Any]]:
         "count_brews_chugged": int(row.count_brews_chugged)
         if getattr(row, "count_brews_chugged", None) is not None
         else 0,
+        "count_brews_commented": int(row.count_brews_commented)
+        if getattr(row, "count_brews_commented", None) is not None
+        else 0,
+        "count_brews_liked": int(row.count_brews_liked)
+        if getattr(row, "count_brews_liked", None) is not None
+        else 0,
+        "count_brews_disliked": int(row.count_brews_disliked)
+        if getattr(row, "count_brews_disliked", None) is not None
+        else 0,
+        "count_brews_rated": int(row.count_brews_rated)
+        if getattr(row, "count_brews_rated", None) is not None
+        else 0,
+        "count_brews_starred": int(row.count_brews_starred)
+        if getattr(row, "count_brews_starred", None) is not None
+        else 0,
+        "count_brews_wishlisted": int(row.count_brews_wishlisted)
+        if getattr(row, "count_brews_wishlisted", None) is not None
+        else 0,
     }
 
 
@@ -79,10 +137,18 @@ def main(request):
         return set_cors_headers(make_response("", 204), request)
 
     try:
-        body = request.get_json(silent=True) or {}
-        cuid = body.get("cuid")
+        # Require Authorization token and derive cuid from it
+        claims = verify_token(request)
+        if claims is None:
+            return error_response("Unauthorized", 401, request)
+
+        cuid = claims.get("cuid") or claims.get("sub") or claims.get("email")
         if not cuid:
-            return error_response("Missing required field: cuid", 400, request)
+            return error_response(
+                "Missing required field: cuid (derive from Authorization token)",
+                400,
+                request,
+            )
 
         user = fetch_user_by_cuid(cuid)
         resp = make_response(json.dumps({"user": user}), 200)
