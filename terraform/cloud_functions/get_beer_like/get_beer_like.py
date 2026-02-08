@@ -72,7 +72,17 @@ def normalize_string(value: Any) -> Optional[str]:
 
 def fetch_beer_like(table: str, cuid: str, beer_name: str) -> Optional[Dict[str, Any]]:
     query = f"""
-    SELECT cuid, beer_name, beer_id, ind_like_status, ind_starred, ind_tried, ind_wishlist, user_rating, user_comments, created_at, updated_at
+    SELECT
+    beer_name
+    , beer_id
+    , ind_like_status
+    , ind_starred
+    , ind_tried
+    , ind_wishlist
+    , user_rating
+    , user_comments
+    , created_at
+    , updated_at
     FROM `{table}`
     WHERE cuid = @cuid AND beer_name = @beer_name
     LIMIT 1
@@ -86,7 +96,6 @@ def fetch_beer_like(table: str, cuid: str, beer_name: str) -> Optional[Dict[str,
     if rows:
         row = rows[0]
         return {
-            "cuid": row.cuid,
             "beer_name": row.beer_name,
             "beer_id": row.beer_id,
             "ind_like_status": row.ind_like_status,

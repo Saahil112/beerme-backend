@@ -71,7 +71,6 @@ def list_friends(cuid: str, limit: int = 50) -> List[Dict[str, Any]]:
 
     query = f"""
     SELECT
-      u.cuid,
       u.username,
       u.first_name,
       u.last_name,

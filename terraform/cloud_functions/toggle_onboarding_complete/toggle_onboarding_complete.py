@@ -19,6 +19,7 @@ PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
 USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
 REQUIRED_SCOPE = "recommendations:read"
+JWT_SECRET = os.environ.get("JWT_SECRET")
 
 
 def verify_token(request) -> Optional[Dict[str, Any]]:
@@ -29,7 +30,10 @@ def verify_token(request) -> Optional[Dict[str, Any]]:
     if not token:
         return None
     try:
-        decoded = jwt.decode(token, os.environ.get("JWT_SECRET"), algorithms=["HS256"])
+        if not JWT_SECRET:
+            # Missing server config for JWT secret
+            return None
+        decoded = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
         scopes = decoded.get("scopes", [])
         if REQUIRED_SCOPE not in scopes:
             return None

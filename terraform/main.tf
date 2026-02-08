@@ -203,6 +203,7 @@ module "oauth_login_function" {
     OAUTH_CLIENT_SECRET = data.google_secret_manager_secret_version.oauth_client_secret.secret_data
     PROJECT_ID          = var.project_id
     DATASET_ID          = var.dataset_id
+    JWT_SECRET          = data.google_secret_manager_secret_version.jwt_secret.secret_data
   }
   depends_on = [google_project_service.services, module.bigquery]
 }
@@ -302,6 +303,7 @@ module "toggle_onboarding_complete_function" {
   extra_env = {
     PROJECT_ID = var.project_id
     DATASET_ID = var.dataset_id
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
   }
   depends_on = [google_project_service.services, module.bigquery]
 }
@@ -321,6 +323,7 @@ module "fetch_user_details_function" {
   extra_env = {
     PROJECT_ID = var.project_id
     DATASET_ID = var.dataset_id
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
   }
   depends_on = [google_project_service.services, module.bigquery, module.iam]
 }

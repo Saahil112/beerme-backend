@@ -63,7 +63,7 @@ def verify_token(request) -> Optional[Dict[str, Any]]:
 
 
 def search_users_by_username(
-    prefix: str, exclude_cuid: str = None, limit: int = 5
+    prefix: str, exclude_cuid: str = None, limit: int = 5, current_cuid: str = None
 ) -> List[Dict[str, Any]]:
     if not USERS_TABLE:
         raise ValueError("Server misconfigured: missing PROJECT_ID or DATASET_ID")
@@ -78,7 +78,7 @@ def search_users_by_username(
     , users.user_level
     , buddies.status AS buddy_status
     FROM `{USERS_TABLE}` users
-    LEFT JOIN `{BUDDIES_TABLE}` AS buddies ON users.cuid = buddies.friend_cuid
+        LEFT JOIN `{BUDDIES_TABLE}` AS buddies ON users.cuid = buddies.friend_cuid AND buddies.cuid = @current_cuid
     WHERE users.username IS NOT NULL
         AND LOWER(users.username) LIKE CONCAT(LOWER(@prefix), '%')
         AND users.cuid != @exclude_cuid
@@ -88,11 +88,19 @@ def search_users_by_username(
     params = [
         bigquery.ScalarQueryParameter("prefix", "STRING", prefix),
         bigquery.ScalarQueryParameter("exclude_cuid", "STRING", exclude_cuid or ""),
+        bigquery.ScalarQueryParameter("current_cuid", "STRING", current_cuid or ""),
         bigquery.ScalarQueryParameter("limit", "INT64", limit),
     ]
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     rows = client.query(query, job_config=job_config).result()
-    return [dict(r) for r in rows]
+
+    results: List[Dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        # Do not expose other users' cuid in API response
+        d.pop("cuid", None)
+        results.append(d)
+    return results
 
 
 def main(request):
@@ -124,10 +132,15 @@ def main(request):
             return set_cors_headers(resp, request)
 
         # Extract current user's cuid from JWT claims to exclude from results
-        current_user_cuid = claims.get("sub")
+        current_user_cuid = (
+            claims.get("cuid") or claims.get("sub") or claims.get("email")
+        )
 
         results = search_users_by_username(
-            q, exclude_cuid=current_user_cuid, limit=limit
+            q,
+            exclude_cuid=current_user_cuid,
+            limit=limit,
+            current_cuid=current_user_cuid,
         )
         resp = make_response(json.dumps({"results": results}), 200)
         resp.headers.set("Content-Type", "application/json")
