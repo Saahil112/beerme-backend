@@ -20,6 +20,12 @@ OAUTH_CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
 USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
+BALANCES_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.balances" if PROJECT_ID and DATASET_ID else None
+)
+ADMIN_CUIDS = set(
+    c.strip() for c in os.environ.get("ADMIN_CUIDS", "").split(",") if c.strip()
+)
 
 
 def set_cors_headers(response, request=None):
@@ -179,6 +185,26 @@ def verify_google_id_token(token: str) -> Dict[str, Any]:
     return id_token.verify_oauth2_token(token, req, OAUTH_CLIENT_ID)
 
 
+def init_balance(cuid: str):
+    """Insert a zero-balance row for a new user if one doesn't already exist."""
+    if not BALANCES_TABLE:
+        return
+    query = f"""
+    MERGE `{BALANCES_TABLE}` AS B
+    USING (SELECT @cuid AS cuid, @wallet_type AS wallet_type) AS S
+    ON B.cuid = S.cuid AND B.wallet_type = S.wallet_type
+    WHEN NOT MATCHED THEN
+        INSERT (cuid, balance, updated_at, wallet_type)
+        VALUES (S.cuid, 0, CURRENT_TIMESTAMP(), S.wallet_type)
+    """
+    params = [
+        bigquery.ScalarQueryParameter("cuid", "STRING", cuid),
+        bigquery.ScalarQueryParameter("wallet_type", "STRING", "BOTTLE_CAPS"),
+    ]
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    client.query(query, job_config=job_config).result()
+
+
 def main(request):
     if request.method.upper() == "OPTIONS":
         return set_cors_headers(make_response("", 204), request)
@@ -198,6 +224,9 @@ def main(request):
 
         # Check if user is setting/updating username
         requested_username = body.get("username")
+        existing_user = get_existing_user(email)
+        is_new_user = existing_user is None
+
         if requested_username:
             # Validate username length
             if len(requested_username) < 3:
@@ -206,7 +235,6 @@ def main(request):
                 )
 
             # Check if username is available (skip check if it's the user's current username)
-            existing_user = get_existing_user(email)
             if existing_user and existing_user.get("username") != requested_username:
                 if not check_username_available(requested_username):
                     return error_response("Username already taken", 409, request)
@@ -230,11 +258,21 @@ def main(request):
             cuid, email, first_name, last_name, profile_pic_url, requested_username
         )
 
+        # Initialize balance for new users
+        if is_new_user:
+            init_balance(cuid)
+
         # Determine if username setup is needed
         needs_username = user.get("username") is None or user.get("username") == ""
 
+        # Add is_admin flag based on cuid
+        is_admin = cuid in ADMIN_CUIDS
+
         resp = make_response(
-            json.dumps({"user": user, "needs_username": needs_username}), 200
+            json.dumps(
+                {"user": user, "needs_username": needs_username, "is_admin": is_admin}
+            ),
+            200,
         )
         resp.headers.set("Content-Type", "application/json")
         return set_cors_headers(resp, request)

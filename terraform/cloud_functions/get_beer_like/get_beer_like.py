@@ -21,6 +21,10 @@ DATASET_ID = os.environ.get("DATASET_ID")
 BEER_LIKES_TABLE = (
     f"{PROJECT_ID}.{DATASET_ID}.beer_likes" if PROJECT_ID and DATASET_ID else None
 )
+BUDDIES_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
+)
+USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
 REQUIRED_SCOPE = "recommendations:read"
 
 
@@ -68,6 +72,35 @@ def normalize_string(value: Any) -> Optional[str]:
         trimmed = value.strip()
         return trimmed if trimmed else None
     return str(value)
+
+
+def resolve_and_verify_friend(
+    users_table: str, buddies_table: str, cuid: str, friend_username: str
+) -> Optional[str]:
+    """Resolve a username to a cuid and verify accepted friendship.
+
+    Returns the friend's cuid if the username exists and the friendship is
+    accepted, otherwise returns None.
+    """
+    query = f"""
+    SELECT u.cuid
+    FROM `{users_table}` u
+    INNER JOIN `{buddies_table}` b
+        ON b.friend_cuid = u.cuid
+    WHERE LOWER(u.username) = LOWER(@friend_username)
+        AND b.cuid = @cuid
+        AND b.status = 'accepted'
+    LIMIT 1
+    """
+    params = [
+        bigquery.ScalarQueryParameter("friend_username", "STRING", friend_username),
+        bigquery.ScalarQueryParameter("cuid", "STRING", cuid),
+    ]
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    rows = list(client.query(query, job_config=job_config).result())
+    if rows:
+        return rows[0].cuid
+    return None
 
 
 def fetch_beer_like(table: str, cuid: str, beer_name: str) -> Optional[Dict[str, Any]]:
@@ -131,6 +164,7 @@ def main(request):
     try:
         body = request.get_json(silent=True) or {}
         beer_name = normalize_string(body.get("beer_name")) or ""
+        friend_username = normalize_string(body.get("friend_username"))
 
         # Derive cuid from verified JWT claims (do not accept from frontend)
         cuid = None
@@ -147,7 +181,22 @@ def main(request):
         if not beer_name:
             return error_response("Missing required field: beer_name", 400, request)
 
-        record = fetch_beer_like(BEER_LIKES_TABLE, cuid, beer_name)
+        # Determine whose beer like to fetch
+        target_cuid = cuid
+        if friend_username:
+            # Resolve username → cuid and verify accepted friendship in one query
+            friend_cuid = resolve_and_verify_friend(
+                USERS_TABLE, BUDDIES_TABLE, cuid, friend_username
+            )
+            if friend_cuid is None:
+                return error_response(
+                    "Forbidden: user not found or not an accepted friend",
+                    403,
+                    request,
+                )
+            target_cuid = friend_cuid
+
+        record = fetch_beer_like(BEER_LIKES_TABLE, target_cuid, beer_name)
         resp = make_response(json.dumps({"like": record}), 200)
         resp.headers.set("Content-Type", "application/json")
         return set_cors_headers(resp, request)

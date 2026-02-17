@@ -22,6 +22,9 @@ def set_cors_headers(response):
 JWT_SECRET = os.environ.get("JWT_SECRET")
 USER_CREDENTIALS_RAW = os.environ.get("USER_CREDENTIALS", "{}")
 TOKEN_TTL_SECONDS = int(os.environ.get("TOKEN_TTL_SECONDS", "3600"))
+ADMIN_CUIDS = set(
+    c.strip() for c in os.environ.get("ADMIN_CUIDS", "").split(",") if c.strip()
+)
 
 try:
     USER_CREDENTIALS: Dict[str, str] = json.loads(USER_CREDENTIALS_RAW)
@@ -40,6 +43,9 @@ def issue_token(email: str, cuid: str | None = None) -> str:
     # Include the cuid claim when provided
     if cuid:
         payload["cuid"] = cuid
+        payload["is_admin"] = cuid in ADMIN_CUIDS
+    else:
+        payload["is_admin"] = False
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 

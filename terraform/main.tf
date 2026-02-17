@@ -44,6 +44,11 @@ data "google_secret_manager_secret_version" "oauth_client_secret" {
   project = var.project_id
 }
 
+data "google_secret_manager_secret_version" "system_api_key" {
+  secret  = "system_api_key"
+  project = var.project_id
+}
+
 module "bigquery" {
   source = "./bigquery"
   project_id = var.project_id
@@ -179,6 +184,7 @@ module "auth_function" {
   extra_env = {
     JWT_SECRET        = data.google_secret_manager_secret_version.jwt_secret.secret_data
     TOKEN_TTL_SECONDS = "3600"
+    ADMIN_CUIDS       = "114331153909024879074,110582307798833713729"
     USER_CREDENTIALS  = jsonencode({
       "demo@example.com" = "changeme123"
     })
@@ -204,6 +210,7 @@ module "oauth_login_function" {
     PROJECT_ID          = var.project_id
     DATASET_ID          = var.dataset_id
     JWT_SECRET          = data.google_secret_manager_secret_version.jwt_secret.secret_data
+    ADMIN_CUIDS         = "114331153909024879074,110582307798833713729"
   }
   depends_on = [google_project_service.services, module.bigquery]
 }
@@ -398,6 +405,91 @@ module "buddies_list_friends_function" {
     JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
   }
   depends_on = [google_project_service.services, module.bigquery, module.iam]
+}
+
+module "fetch_randoms_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "fetch-randoms"
+  runtime               = var.function_runtime
+  service_account_email = module.iam.service_account_email
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "fetch_randoms"
+  source_main_py        = "fetch_randoms.py"
+  entry_point           = "main"
+  extra_env = {
+    JWT_SECRET = data.google_secret_manager_secret_version.jwt_secret.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.iam]
+}
+
+module "reward_user_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "reward-user"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "reward_user"
+  source_main_py        = "reward_user.py"
+  entry_point           = "main"
+  extra_env = {
+    PROJECT_ID       = var.project_id
+    DATASET_ID       = var.dataset_id
+    JWT_SECRET       = data.google_secret_manager_secret_version.jwt_secret.secret_data
+    ADMIN_CUID       = "11249400013"
+    AUTHORIZED_CUIDS = "114331153909024879074,110582307798833713729"
+    SYSTEM_API_KEY   = data.google_secret_manager_secret_version.system_api_key.secret_data
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
+module "admin_deposit_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "admin-deposit"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "admin_deposit"
+  source_main_py        = "admin_deposit.py"
+  entry_point           = "main"
+  extra_env = {
+    PROJECT_ID = var.project_id
+    DATASET_ID = var.dataset_id
+    JWT_SECRET       = data.google_secret_manager_secret_version.jwt_secret.secret_data
+    ADMIN_CUID       = "11249400013"
+    AUTHORIZED_CUIDS = "114331153909024879074,110582307798833713729"
+  }
+  depends_on = [google_project_service.services, module.bigquery]
+}
+
+module "check_milestones_function" {
+  source                = "./cloud_functions"
+  project_id            = var.project_id
+  region                = var.region
+  function_name         = "check-milestones"
+  runtime               = var.function_runtime
+  service_account_email = "innerbeer-writer-sa@brewquest-analytics.iam.gserviceaccount.com"
+  dataset_id            = var.dataset_id
+  bucket_name           = google_storage_bucket.function_source.name
+  source_dir            = "check_milestones"
+  source_main_py        = "check_milestones.py"
+  entry_point           = "main"
+  extra_env = {
+    PROJECT_ID     = var.project_id
+    DATASET_ID     = var.dataset_id
+    JWT_SECRET     = data.google_secret_manager_secret_version.jwt_secret.secret_data
+    SYSTEM_API_KEY = data.google_secret_manager_secret_version.system_api_key.secret_data
+    REWARD_USER_URL = module.reward_user_function.function_url
+  }
+  depends_on = [google_project_service.services, module.bigquery, module.reward_user_function]
 }
 
 # Grant table-level write on users to writer SA
