@@ -18,6 +18,9 @@ ALLOWED_ORIGINS = {
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
 USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
+BALANCES_TABLE = (
+    f"{PROJECT_ID}.{DATASET_ID}.balances" if PROJECT_ID and DATASET_ID else None
+)
 REQUIRED_SCOPE = "recommendations:read"
 JWT_SECRET = os.environ.get("JWT_SECRET")
 
@@ -68,24 +71,27 @@ def fetch_user_by_cuid(cuid: str) -> Optional[Dict[str, Any]]:
 
     query = f"""
     SELECT
-        first_name
-        , last_name
-        , email
-        , profile_pic_url
-        , username
-        , created_at
-        , updated_at
-        , ind_first_time_user
-        , user_level
-        , count_brews_chugged
-        , count_brews_commented
-        , count_brews_liked
-        , count_brews_disliked
-        , count_brews_rated
-        , count_brews_starred
-        , count_brews_wishlisted
-    FROM `{USERS_TABLE}`
-    WHERE cuid = @cuid
+        u.first_name
+        , u.last_name
+        , u.email
+        , u.profile_pic_url
+        , u.username
+        , u.created_at
+        , u.updated_at
+        , u.ind_first_time_user
+        , u.user_level
+        , u.count_brews_chugged
+        , u.count_brews_commented
+        , u.count_brews_liked
+        , u.count_brews_disliked
+        , u.count_brews_rated
+        , u.count_brews_starred
+        , u.count_brews_wishlisted
+        , COALESCE(b.balance, 0) AS balance
+    FROM `{USERS_TABLE}` u
+    LEFT JOIN `{BALANCES_TABLE}` b
+        ON u.cuid = b.cuid AND b.wallet_type = 'BOTTLE_CAPS'
+    WHERE u.cuid = @cuid
     LIMIT 1
     """
     params = [bigquery.ScalarQueryParameter("cuid", "STRING", cuid)]
@@ -129,6 +135,7 @@ def fetch_user_by_cuid(cuid: str) -> Optional[Dict[str, Any]]:
         "count_brews_wishlisted": int(row.count_brews_wishlisted)
         if getattr(row, "count_brews_wishlisted", None) is not None
         else 0,
+        "balance": int(row.balance) if getattr(row, "balance", None) is not None else 0,
     }
 
 

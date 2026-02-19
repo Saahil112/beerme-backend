@@ -22,7 +22,7 @@ ADMIN_CUID = os.environ.get("ADMIN_CUID")
 AUTHORIZED_CUIDS = set(
     c.strip() for c in os.environ.get("AUTHORIZED_CUIDS", "").split(",") if c.strip()
 )
-SYSTEM_API_KEY = os.environ.get("SYSTEM_API_KEY")
+SYSTEM_API_KEY = (os.environ.get("SYSTEM_API_KEY") or "").strip()
 WALLET_TYPE = "BOTTLE_CAPS"
 REQUIRED_SCOPE = "recommendations:read"
 
@@ -74,9 +74,12 @@ def error_response(message: str, status: int = 400, request=None):
     return set_cors_headers(resp, request)
 
 
-def validate_reason_code(reason_code: str, expected_is_credit: bool) -> bool:
-    """Check that the reason_code exists in txn_reason_codes, is active,
-    and its is_credit flag matches the expected value."""
+def lookup_reason_code(reason_code: str) -> Optional[bool]:
+    """Look up a reason_code in txn_reason_codes.
+
+    Returns the ``is_credit`` flag (True/False) when the code exists and is
+    active, or ``None`` when it is missing / inactive.
+    """
     query = f"""
     SELECT is_credit
     FROM `{TXN_REASON_CODES_TABLE}`
@@ -87,8 +90,8 @@ def validate_reason_code(reason_code: str, expected_is_credit: bool) -> bool:
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     rows = list(client.query(query, job_config=job_config).result())
     if not rows:
-        return False
-    return rows[0].is_credit == expected_is_credit
+        return None
+    return bool(rows[0].is_credit)
 
 
 def insert_transaction(
@@ -153,15 +156,20 @@ def refresh_balance(cuid: str):
 
 
 def main(request):
-    """Reward a user with bottlecaps.
+    """Admin transfer – issue or revoke bottlecaps for a user.
 
-    Creates two transactions:
-      1. REWARD (credit) to the target user
-      2. PAYOUT (debit) from the admin account
+    Creates two linked transactions (double-entry bookkeeping):
+      * When the reason code is a *credit* (is_credit=True):
+          1. CREDIT +amount  → target user   (reason from request)
+          2. DEBIT  −amount  → admin account  (same reason)
+      * When the reason code is a *debit* (is_credit=False):
+          1. DEBIT  −amount  → target user   (reason from request)
+          2. CREDIT +amount  → admin account  (same reason)
 
     Request body (JSON):
-      - cuid (str, required): the user to reward
+      - cuid   (str, required): the target user
       - amount (int, required): number of bottlecaps (must be > 0)
+      - reason (str, required): an active reason_code from txn_reason_codes
 
     Both balances are refreshed after the transactions.
     """
@@ -198,11 +206,14 @@ def main(request):
         body = request.get_json(silent=True) or {}
         target_cuid = body.get("cuid")
         amount = body.get("amount")
+        reason = (body.get("reason") or "").strip().upper()
 
         if not target_cuid:
             return error_response("Missing required field: cuid", 400, request)
         if amount is None:
             return error_response("Missing required field: amount", 400, request)
+        if not reason:
+            return error_response("Missing required field: reason", 400, request)
         try:
             amount = int(amount)
         except (ValueError, TypeError):
@@ -210,40 +221,50 @@ def main(request):
         if amount <= 0:
             return error_response("amount must be greater than 0", 400, request)
 
-        # Validate reason codes
-        if not validate_reason_code("REWARD", expected_is_credit=True):
+        # Validate reason code and determine transaction direction
+        is_credit = lookup_reason_code(reason)
+        if is_credit is None:
             return error_response(
-                "REWARD reason_code is not active or misconfigured", 500, request
-            )
-        if not validate_reason_code("PAYOUT", expected_is_credit=False):
-            return error_response(
-                "PAYOUT reason_code is not active or misconfigured", 500, request
+                f"reason_code '{reason}' is not active or does not exist", 400, request
             )
 
         # Generate linked transaction IDs
-        reward_txn_id = str(uuid.uuid4())
-        payout_txn_id = str(uuid.uuid4())
+        user_txn_id = str(uuid.uuid4())
+        admin_txn_id = str(uuid.uuid4())
 
-        # 1. Credit the user (REWARD) — positive amount
+        if is_credit:
+            # Credit flow: +amount to user, -amount from admin
+            user_txn_type = "CREDIT"
+            user_amount = amount
+            admin_txn_type = "DEBIT"
+            admin_amount = -amount
+        else:
+            # Debit flow: -amount from user, +amount to admin
+            user_txn_type = "DEBIT"
+            user_amount = -amount
+            admin_txn_type = "CREDIT"
+            admin_amount = amount
+
+        # 1. User-side transaction
         insert_transaction(
-            transaction_id=reward_txn_id,
+            transaction_id=user_txn_id,
             cuid=target_cuid,
-            amount=amount,
-            transaction_type="CREDIT",
-            reason_code="REWARD",
+            amount=user_amount,
+            transaction_type=user_txn_type,
+            reason_code=reason,
             related_entity_type="transaction",
-            related_entity_id=payout_txn_id,
+            related_entity_id=admin_txn_id,
         )
 
-        # 2. Debit the admin (PAYOUT) — negative amount
+        # 2. Admin-side counter-transaction
         insert_transaction(
-            transaction_id=payout_txn_id,
+            transaction_id=admin_txn_id,
             cuid=ADMIN_CUID,
-            amount=-amount,
-            transaction_type="DEBIT",
-            reason_code="PAYOUT",
+            amount=admin_amount,
+            transaction_type=admin_txn_type,
+            reason_code=reason,
             related_entity_type="transaction",
-            related_entity_id=reward_txn_id,
+            related_entity_id=user_txn_id,
         )
 
         # Refresh balances for both accounts
@@ -251,11 +272,13 @@ def main(request):
         refresh_balance(ADMIN_CUID)
 
         resp_data = {
-            "message": "Reward issued successfully",
-            "reward_transaction_id": reward_txn_id,
-            "payout_transaction_id": payout_txn_id,
+            "message": "Transfer completed successfully",
+            "user_transaction_id": user_txn_id,
+            "admin_transaction_id": admin_txn_id,
             "cuid": target_cuid,
             "amount": amount,
+            "reason": reason,
+            "direction": "credit" if is_credit else "debit",
         }
         resp = make_response(json.dumps(resp_data), 200)
         resp.headers.set("Content-Type", "application/json")

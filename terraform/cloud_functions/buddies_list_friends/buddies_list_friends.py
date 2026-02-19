@@ -89,6 +89,7 @@ def list_friends(cuid: str, limit: int = 50) -> List[Dict[str, Any]]:
         on u.user_level = l.level_rank
     WHERE b.cuid = @cuid
       AND b.status IN ('accepted', 'pending')
+      AND (u.ind_is_hidden IS NULL OR u.ind_is_hidden = FALSE)
     ORDER BY b.status DESC, b.requested_at DESC
     LIMIT @limit
     """

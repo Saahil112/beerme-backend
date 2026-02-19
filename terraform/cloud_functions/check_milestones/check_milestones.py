@@ -18,7 +18,7 @@ ALLOWED_ORIGINS = {
 
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
-SYSTEM_API_KEY = os.environ.get("SYSTEM_API_KEY")
+SYSTEM_API_KEY = (os.environ.get("SYSTEM_API_KEY") or "").strip()
 REWARD_USER_URL = os.environ.get("REWARD_USER_URL")
 REQUIRED_SCOPE = "recommendations:read"
 
@@ -151,7 +151,7 @@ def call_reward_user(cuid: str, amount: int) -> Dict[str, Any]:
     """Call the reward-user cloud function using the system API key."""
     resp = requests.post(
         REWARD_USER_URL,
-        json={"cuid": cuid, "amount": amount},
+        json={"cuid": cuid, "amount": amount, "reason": "REWARD"},
         headers={
             "Content-Type": "application/json",
             "X-System-API-Key": SYSTEM_API_KEY,

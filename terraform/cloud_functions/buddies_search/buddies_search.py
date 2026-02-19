@@ -82,6 +82,7 @@ def search_users_by_username(
     WHERE users.username IS NOT NULL
         AND LOWER(users.username) LIKE CONCAT(LOWER(@prefix), '%')
         AND users.cuid != @exclude_cuid
+        AND (users.ind_is_hidden IS NULL OR users.ind_is_hidden = FALSE)
     ORDER BY users.username ASC
     LIMIT @limit
     """
