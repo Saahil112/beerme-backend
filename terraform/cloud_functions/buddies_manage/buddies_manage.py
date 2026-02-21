@@ -21,6 +21,7 @@ DATASET_ID = os.environ.get("DATASET_ID")
 BUDDIES_TABLE = (
     f"{PROJECT_ID}.{DATASET_ID}.buddies" if PROJECT_ID and DATASET_ID else None
 )
+USERS_TABLE = f"{PROJECT_ID}.{DATASET_ID}.users" if PROJECT_ID and DATASET_ID else None
 REQUIRED_SCOPE = "recommendations:read"
 
 
@@ -70,6 +71,25 @@ def normalize_string(v: Any) -> Optional[str]:
     return str(v)
 
 
+def resolve_username_to_cuid(username: str) -> Optional[str]:
+    """Look up a user's cuid by their username."""
+    if not USERS_TABLE:
+        raise ValueError("Server misconfigured: missing PROJECT_ID or DATASET_ID")
+
+    query = f"""
+    SELECT cuid
+    FROM `{USERS_TABLE}`
+    WHERE LOWER(username) = LOWER(@username)
+    LIMIT 1
+    """
+    params = [bigquery.ScalarQueryParameter("username", "STRING", username)]
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    rows = list(client.query(query, job_config=job_config).result())
+    if rows:
+        return rows[0].cuid
+    return None
+
+
 def send_friend_request(sender_cuid: str, receiver_cuid: str) -> Dict[str, Any]:
     if not BUDDIES_TABLE:
         raise ValueError("Server misconfigured: missing PROJECT_ID or DATASET_ID")
@@ -97,24 +117,28 @@ def send_friend_request(sender_cuid: str, receiver_cuid: str) -> Dict[str, Any]:
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     client.query(query, job_config=job_config).result()
 
-    # Return the current state of the request
+    # Return the current state with usernames instead of cuids
     select_sql = f"""
-    SELECT cuid, friend_cuid, status, requested_at, accepted_at
-    FROM `{BUDDIES_TABLE}`
-    WHERE cuid = @sender AND friend_cuid = @receiver
+    SELECT b.status, b.requested_at, b.accepted_at,
+           u_sender.username AS sender_username,
+           u_receiver.username AS receiver_username
+    FROM `{BUDDIES_TABLE}` b
+    JOIN `{USERS_TABLE}` u_sender ON b.cuid = u_sender.cuid
+    JOIN `{USERS_TABLE}` u_receiver ON b.friend_cuid = u_receiver.cuid
+    WHERE b.cuid = @sender AND b.friend_cuid = @receiver
     LIMIT 1
     """
     rows = list(client.query(select_sql, job_config=job_config).result())
     if rows:
         r = rows[0]
         return {
-            "cuid": r.cuid,
-            "friend_cuid": r.friend_cuid,
+            "sender_username": r.sender_username,
+            "receiver_username": r.receiver_username,
             "status": r.status,
             "requested_at": r.requested_at.isoformat() if r.requested_at else None,
             "accepted_at": r.accepted_at.isoformat() if r.accepted_at else None,
         }
-    return {"cuid": sender_cuid, "friend_cuid": receiver_cuid, "status": "pending"}
+    return {"status": "pending"}
 
 
 def accept_friend_request(sender_cuid: str, receiver_cuid: str) -> list[Dict[str, Any]]:
@@ -153,19 +177,23 @@ def accept_friend_request(sender_cuid: str, receiver_cuid: str) -> list[Dict[str
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     client.query(script, job_config=job_config).result()
 
-    # Return both rows
+    # Return both rows with usernames instead of cuids
     select_sql = f"""
-    SELECT cuid, friend_cuid, status, requested_at, accepted_at
-    FROM `{BUDDIES_TABLE}`
-    WHERE (cuid = @sender AND friend_cuid = @receiver)
-       OR (cuid = @receiver AND friend_cuid = @sender)
-    ORDER BY cuid ASC
-     """
+    SELECT b.status, b.requested_at, b.accepted_at,
+           u_self.username AS self_username,
+           u_friend.username AS friend_username
+    FROM `{BUDDIES_TABLE}` b
+    JOIN `{USERS_TABLE}` u_self ON b.cuid = u_self.cuid
+    JOIN `{USERS_TABLE}` u_friend ON b.friend_cuid = u_friend.cuid
+    WHERE (b.cuid = @sender AND b.friend_cuid = @receiver)
+       OR (b.cuid = @receiver AND b.friend_cuid = @sender)
+    ORDER BY u_self.username ASC
+    """
     rows = list(client.query(select_sql, job_config=job_config).result())
     return [
         {
-            "cuid": r.cuid,
-            "friend_cuid": r.friend_cuid,
+            "username": r.self_username,
+            "friend_username": r.friend_username,
             "status": r.status,
             "requested_at": r.requested_at.isoformat() if r.requested_at else None,
             "accepted_at": r.accepted_at.isoformat() if r.accepted_at else None,
@@ -180,7 +208,7 @@ def main(request):
 
     if not JWT_SECRET:
         return error_response("Server misconfigured: missing JWT_SECRET", 500, request)
-    if not BUDDIES_TABLE:
+    if not BUDDIES_TABLE or not USERS_TABLE:
         return error_response(
             "Server misconfigured: missing PROJECT_ID or DATASET_ID", 500, request
         )
@@ -200,16 +228,22 @@ def main(request):
         if isinstance(claims, dict):
             sender_cuid = claims.get("cuid") or claims.get("sub") or claims.get("email")
         sender_cuid = normalize_string(sender_cuid) or ""
-        receiver_cuid = normalize_string(body.get("receiver_cuid")) or ""
+        receiver_username = normalize_string(body.get("receiver_username")) or ""
 
         if action not in {"send", "accept"}:
             return error_response("action must be 'send' or 'accept'", 400, request)
-        if not sender_cuid or not receiver_cuid:
+        if not sender_cuid or not receiver_username:
             return error_response(
-                "sender_cuid (from token) and receiver_cuid (in body) are required",
+                "receiver_username is required",
                 400,
                 request,
             )
+
+        # Resolve receiver username to cuid server-side
+        receiver_cuid = resolve_username_to_cuid(receiver_username)
+        if not receiver_cuid:
+            return error_response("User not found", 404, request)
+
         if sender_cuid == receiver_cuid:
             return error_response("sender and receiver must be different", 400, request)
 
