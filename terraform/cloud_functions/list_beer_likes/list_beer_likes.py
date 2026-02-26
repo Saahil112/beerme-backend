@@ -123,7 +123,6 @@ def fetch_beer_likes(
 ) -> List[Dict[str, Any]]:
     query = f"""
     SELECT
-      l.cuid,
       l.beer_name,
       l.beer_id,
       l.ind_like_status,
